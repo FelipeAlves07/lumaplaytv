@@ -1,0 +1,96 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  ACTIVE
+  BLOCKED
+  EXPIRED
+}
+
+model Customer {
+  id           String     @id @default(cuid())
+  name         String
+  username     String     @unique
+  passwordHash String
+  status       UserStatus @default(ACTIVE)
+  expiresAt    DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  playlists    Playlist[]
+  favorites    CustomerFavorite[]
+  progress     CustomerProgress[]
+}
+
+model Playlist {
+  id        String   @id @default(cuid())
+  name      String
+
+  m3uUrl    String
+  host      String?
+  username  String?
+  password  String?
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+model CustomerFavorite {
+  id          String   @id @default(cuid())
+  customerId  String
+  itemId      String
+  itemType    String   @default("catalog")
+  title       String
+  subtitle    String?
+  tag         String?
+  year        String?
+  duration    String?
+  description String?
+  poster      String?
+  logoUrl     String?
+  streamUrl   String?
+  category    String?
+  isLive      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, itemId])
+}
+
+model CustomerProgress {
+  id              String   @id @default(cuid())
+  customerId      String
+  itemId          String
+  itemType        String   @default("catalog")
+  title           String
+  subtitle        String?
+  tag             String?
+  year            String?
+  duration        String?
+  description     String?
+  poster          String?
+  logoUrl         String?
+  streamUrl       String?
+  category        String?
+  isLive          Boolean  @default(false)
+  positionSeconds Int      @default(0)
+  durationSeconds Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, itemId])
+}

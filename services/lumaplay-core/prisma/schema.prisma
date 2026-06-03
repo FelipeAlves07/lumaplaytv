@@ -1,0 +1,107 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Admin {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Customer {
+  id                String           @id @default(cuid())
+  name              String
+  appUsername       String           @unique
+  appPasswordHash   String
+  status            CustomerStatus   @default(ACTIVE)
+  expiresAt         DateTime
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  iptvCredential    IptvCredential?
+  devices           CustomerDevice[]
+  favorites         Favorite[]
+  watchHistory      WatchHistory[]
+  sessions          Session[]
+}
+
+model IptvCredential {
+  id                String   @id @default(cuid())
+  customerId        String   @unique
+  serverUrl         String
+  iptvUsername      String
+  iptvPasswordEnc   String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+model CustomerDevice {
+  id          String   @id @default(cuid())
+  customerId  String
+  deviceId    String
+  deviceName  String
+  platform    String
+  lastSeenAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+model Favorite {
+  id          String       @id @default(cuid())
+  customerId  String
+  contentId   String
+  contentType ContentType
+  createdAt   DateTime     @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+model WatchHistory {
+  id            String   @id @default(cuid())
+  customerId    String
+  contentId     String
+  positionSec   Int
+  watchedAt     DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id           String        @id @default(cuid())
+  customerId   String
+  token        String
+  status       SessionStatus @default(ACTIVE)
+  createdAt    DateTime      @default(now())
+  expiresAt    DateTime
+
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+}
+
+enum CustomerStatus {
+  ACTIVE
+  BLOCKED
+  EXPIRED
+}
+
+enum ContentType {
+  LIVE
+  MOVIE
+  SERIES
+}
+
+enum SessionStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
