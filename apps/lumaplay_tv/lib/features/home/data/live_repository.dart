@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 
 import '../../../../core/constants/app_config.dart';
 import '../../../../core/storage/secure_storage.dart';
@@ -6,6 +7,10 @@ import '../domain/live_category.dart';
 import '../domain/live_channel.dart';
 import 'demo_m3u.dart';
 import 'm3u_parser.dart';
+
+List<LiveChannel> parseM3uInBackground(String content) {
+  return M3uParser.parse(content);
+}
 
 class LiveRepository {
   final Dio _dio = Dio();
@@ -61,7 +66,7 @@ class LiveRepository {
           options: Options(
             responseType: ResponseType.plain,
             followRedirects: true,
-            receiveTimeout: const Duration(seconds: 60),
+            receiveTimeout: const Duration(seconds: 90),
             sendTimeout: const Duration(seconds: 30),
             headers: {
               'User-Agent':
@@ -81,7 +86,7 @@ class LiveRepository {
           continue;
         }
 
-        final channels = M3uParser.parse(data);
+        final channels = await compute(parseM3uInBackground, data);
 
         if (channels.isNotEmpty) {
           return channels;

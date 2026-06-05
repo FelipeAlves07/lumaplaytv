@@ -7,8 +7,8 @@ import '../domain/xtream_media.dart';
 class XtreamCatalogRepository {
   final Dio _dio = Dio(
     BaseOptions(
-      connectTimeout: const Duration(seconds: 25),
-      receiveTimeout: const Duration(seconds: 45),
+      connectTimeout: const Duration(seconds: 35),
+      receiveTimeout: const Duration(seconds: 90),
       headers: {
         'User-Agent':
             'Mozilla/5.0 (Linux; Android 10; LumaPlayTV) AppleWebKit/537.36',

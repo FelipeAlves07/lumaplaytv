@@ -100,6 +100,7 @@ class _HomePageState extends State<HomePage> {
 
   VideoPlayerController? videoController;
   Timer? videoControlsTimer;
+  Timer? searchDebounceTimer;
   bool videoLoading = false;
   bool videoError = false;
   bool videoControlsVisible = true;
@@ -110,6 +111,7 @@ class _HomePageState extends State<HomePage> {
   final ScrollController pageScrollController = ScrollController();
   int visibleMovies = 20;
   int visibleSeries = 20;
+  int visibleLiveChannels = 60;
   List<_ContentItem> liveChannels = [];
   List<_ContentItem> filteredLiveChannels = [];
   List<_ContentItem> recentChannels = [];
@@ -332,6 +334,7 @@ class _HomePageState extends State<HomePage> {
     globalSearchController.dispose();
     pageScrollController.dispose();
     videoControlsTimer?.cancel();
+    searchDebounceTimer?.cancel();
     videoController?.dispose();
     super.dispose();
   }
@@ -346,13 +349,13 @@ class _HomePageState extends State<HomePage> {
     final xtreamSeries = results[1];
 
     final nextMovies = xtreamMovies
-        .take(1000)
+        .take(10000)
         .map(contentItemFromXtreamMovie)
         .where((item) => item.title.trim().isNotEmpty)
         .toList();
 
     final nextSeries = xtreamSeries
-        .take(1000)
+        .take(10000)
         .map(contentItemFromXtreamSeries)
         .where((item) => item.title.trim().isNotEmpty)
         .toList();
@@ -578,10 +581,21 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  List<String> get movieCategoryNames {
-    // Mostra apenas categorias com conteúdo visível na tela inicial.
-    // Itens sem capa e legendados ficam ocultos até o usuário pesquisar.
-    final names = mainMovies
+  String normalizeCategoryName(String value) {
+    return value
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .replaceAll('*', '');
+  }
+
+  bool sameCategory(String a, String b) {
+    return normalizeCategoryName(a) == normalizeCategoryName(b);
+  }
+
+  List<String> buildVisibleCategoryNames(List<_ContentItem> source) {
+    final names = source
+        .where((item) => hasValidPoster(item) && !isAdultContent(item))
         .map((item) => item.category.trim())
         .where((category) => category.isNotEmpty)
         .toSet()
@@ -592,18 +606,16 @@ class _HomePageState extends State<HomePage> {
     return ['Todos', ...names];
   }
 
+  List<String> get movieCategoryNames {
+    // Mostra todas as categorias reais da lista que tenham pelo menos 1 item com capa.
+    // Itens sem capa continuam ocultos até o usuário pesquisar pelo nome.
+    return buildVisibleCategoryNames(movies);
+  }
+
   List<String> get seriesCategoryNames {
-    // Mostra apenas categorias com conteúdo visível na tela inicial.
-    // Animes/legendados ficam fora da curadoria principal e aparecem via busca.
-    final names = mainSeries
-        .map((item) => item.category.trim())
-        .where((category) => category.isNotEmpty)
-        .toSet()
-        .toList();
-
-    names.sort();
-
-    return ['Todos', ...names];
+    // Mostra todas as categorias reais da lista que tenham pelo menos 1 item com capa.
+    // A Home continua curada, mas as abas Filmes/Séries entregam mais da M3U.
+    return buildVisibleCategoryNames(series);
   }
 
   bool hasValidPoster(_ContentItem item) {
@@ -743,17 +755,63 @@ class _HomePageState extends State<HomePage> {
     return series.where(hasValidPoster).toList();
   }
 
+  List<_ContentItem> movieBrowsingSource(String effectiveCategory, String query) {
+    if (query.isNotEmpty) {
+      // Busca libera todo o catálogo da M3U, inclusive sem capa e legendados.
+      return movies.where((item) => !isAdultContent(item)).toList();
+    }
+
+    if (effectiveCategory == 'Todos') {
+      // Tela inicial dos filmes prioriza visual limpo: com capa e sem legendados.
+      return movies.where((item) {
+        return hasValidPoster(item) && !isAdultContent(item) && !isSubtitled(item);
+      }).toList();
+    }
+
+    // Categoria escolhida entrega o máximo da M3U, mas ainda esconde sem capa.
+    // Isso evita categorias vazias e permite abrir Legendados/Anime quando o usuário quiser.
+    return movies.where((item) {
+      return hasValidPoster(item) &&
+          !isAdultContent(item) &&
+          sameCategory(item.category, effectiveCategory);
+    }).toList();
+  }
+
+  List<_ContentItem> seriesBrowsingSource(String effectiveCategory, String query) {
+    if (query.isNotEmpty) {
+      // Busca libera todo o catálogo da M3U, inclusive sem capa, legendados e animes.
+      return series.where((item) => !isAdultContent(item)).toList();
+    }
+
+    if (effectiveCategory == 'Todos') {
+      // Tela inicial das séries fica curada: sem animes/legendados e com capa.
+      return series.where((item) {
+        return hasValidPoster(item) &&
+            !isAdultContent(item) &&
+            !isSubtitled(item) &&
+            !isAnimeContent(item);
+      }).toList();
+    }
+
+    // Categoria escolhida entrega o máximo da M3U, com capa e sem adultos.
+    return series.where((item) {
+      return hasValidPoster(item) &&
+          !isAdultContent(item) &&
+          sameCategory(item.category, effectiveCategory);
+    }).toList();
+  }
+
   List<_ContentItem> get filteredMovies {
     final query = movieSearchQuery.trim().toLowerCase();
-    final source = query.isEmpty ? mainMovies : movies;
     final availableCategories = movieCategoryNames;
-    final effectiveCategory = availableCategories.contains(selectedMovieCategory)
-        ? selectedMovieCategory
+    final effectiveCategory = availableCategories.any((category) => sameCategory(category, selectedMovieCategory))
+        ? availableCategories.firstWhere((category) => sameCategory(category, selectedMovieCategory))
         : 'Todos';
+    final source = movieBrowsingSource(effectiveCategory, query);
 
     return source.where((item) {
       final matchesCategory =
-          effectiveCategory == 'Todos' || item.category == effectiveCategory;
+          effectiveCategory == 'Todos' || sameCategory(item.category, effectiveCategory);
 
       final matchesSearch = query.isEmpty ||
           item.title.toLowerCase().contains(query) ||
@@ -762,12 +820,6 @@ class _HomePageState extends State<HomePage> {
           item.tag.toLowerCase().contains(query) ||
           item.category.toLowerCase().contains(query) ||
           item.year.toLowerCase().contains(query);
-
-      // Sem pesquisa: não exibir sem capa nem legendados nas páginas principais.
-      // Com pesquisa: liberar todo o catálogo para o usuário encontrar pelo nome.
-      if (query.isEmpty && (!hasValidPoster(item) || isSubtitled(item))) {
-        return false;
-      }
 
       return matchesCategory && matchesSearch;
     }).toList();
@@ -775,15 +827,15 @@ class _HomePageState extends State<HomePage> {
 
   List<_ContentItem> get filteredSeries {
     final query = seriesSearchQuery.trim().toLowerCase();
-    final source = query.isEmpty ? mainSeries : series;
     final availableCategories = seriesCategoryNames;
-    final effectiveCategory = availableCategories.contains(selectedSeriesCategory)
-        ? selectedSeriesCategory
+    final effectiveCategory = availableCategories.any((category) => sameCategory(category, selectedSeriesCategory))
+        ? availableCategories.firstWhere((category) => sameCategory(category, selectedSeriesCategory))
         : 'Todos';
+    final source = seriesBrowsingSource(effectiveCategory, query);
 
     return source.where((item) {
       final matchesCategory =
-          effectiveCategory == 'Todos' || item.category == effectiveCategory;
+          effectiveCategory == 'Todos' || sameCategory(item.category, effectiveCategory);
 
       final matchesSearch = query.isEmpty ||
           item.title.toLowerCase().contains(query) ||
@@ -792,12 +844,6 @@ class _HomePageState extends State<HomePage> {
           item.tag.toLowerCase().contains(query) ||
           item.category.toLowerCase().contains(query) ||
           item.year.toLowerCase().contains(query);
-
-      // Sem pesquisa: não exibir sem capa, legendados nem animes na curadoria principal.
-      // Com pesquisa: liberar o catálogo completo para quem procurar manualmente.
-      if (query.isEmpty && (!hasValidPoster(item) || isSubtitled(item) || isAnimeContent(item))) {
-        return false;
-      }
 
       return matchesCategory && matchesSearch;
     }).toList();
@@ -817,15 +863,23 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  void debounceSearch(VoidCallback action) {
+    searchDebounceTimer?.cancel();
+    searchDebounceTimer = Timer(const Duration(milliseconds: 260), () {
+      if (!mounted) return;
+      setState(action);
+    });
+  }
+
   void onMovieSearchChanged(String value) {
-    setState(() {
+    debounceSearch(() {
       movieSearchQuery = value;
       visibleMovies = 20;
     });
   }
 
   void onSeriesSearchChanged(String value) {
-    setState(() {
+    debounceSearch(() {
       seriesSearchQuery = value;
       visibleSeries = 20;
     });
@@ -1758,7 +1812,7 @@ class _HomePageState extends State<HomePage> {
     final result = liveChannels.where((item) {
       if (!includeAdult && isAdultContent(item)) return false;
 
-      final matchesCategory = nextCategory == 'Todos' || item.category == nextCategory;
+      final matchesCategory = nextCategory == 'Todos' || sameCategory(item.category, nextCategory);
 
       final matchesSearch = normalizedQuery.isEmpty ||
           item.title.toLowerCase().contains(normalizedQuery) ||
@@ -1771,6 +1825,7 @@ class _HomePageState extends State<HomePage> {
       selectedLiveCategory = nextCategory;
       liveSearchQuery = nextQuery;
       filteredLiveChannels = result;
+      visibleLiveChannels = 60;
 
       if (result.isNotEmpty) {
         selectedHero = result.first;
@@ -1883,10 +1938,10 @@ class _HomePageState extends State<HomePage> {
 
       if (index == 0 && homeTrendingBrazil.isNotEmpty) {
         selectedHero = homeTrendingBrazil.first;
-      } else if (index == 1 && mainMovies.isNotEmpty) {
-        selectedHero = mainMovies.first;
-      } else if (index == 2 && mainSeries.isNotEmpty) {
-        selectedHero = mainSeries.first;
+      } else if (index == 1 && movieBrowsingSource('Todos', '').isNotEmpty) {
+        selectedHero = movieBrowsingSource('Todos', '').first;
+      } else if (index == 2 && seriesBrowsingSource('Todos', '').isNotEmpty) {
+        selectedHero = seriesBrowsingSource('Todos', '').first;
       } else if (index == 3 && filteredLiveChannels.isNotEmpty) {
         selectedHero = filteredLiveChannels.first;
       }
@@ -1909,7 +1964,11 @@ class _HomePageState extends State<HomePage> {
   }
 
   void onLiveSearchChanged(String value) {
-    applyLiveFilters(query: value);
+    searchDebounceTimer?.cancel();
+    searchDebounceTimer = Timer(const Duration(milliseconds: 220), () {
+      if (!mounted) return;
+      applyLiveFilters(query: value);
+    });
   }
 
   Future<void> openSeriesEpisodes(_ContentItem item) async {
@@ -2884,8 +2943,8 @@ class _HomePageState extends State<HomePage> {
 
   Widget buildMoviesPageContent() {
     final categories = movieCategoryNames;
-    final effectiveCategory = categories.contains(selectedMovieCategory)
-        ? selectedMovieCategory
+    final effectiveCategory = categories.any((category) => sameCategory(category, selectedMovieCategory))
+        ? categories.firstWhere((category) => sameCategory(category, selectedMovieCategory))
         : 'Todos';
     final results = filteredMovies;
     final visibleItems = results.take(visibleMovies).toList();
@@ -2895,7 +2954,7 @@ class _HomePageState extends State<HomePage> {
       children: [
         buildPageHeader(
           'Filmes',
-          'Dublados primeiro. Use a busca para encontrar filmes legendados também.',
+          'Catálogo completo da sua lista. Sem capa aparece somente na busca.',
         ),
         buildCatalogCategoryChips(
           categories: categories,
@@ -2918,7 +2977,7 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 18),
         ],
         buildSectionTitle(
-          effectiveCategory == 'Todos' ? 'Filmes Dublados e Populares' : effectiveCategory,
+          effectiveCategory == 'Todos' ? 'Filmes com capa da sua lista' : effectiveCategory,
           '${visibleItems.length}/${results.length} FILMES',
         ),
         buildPosterGrid(items: visibleItems),
@@ -2932,8 +2991,8 @@ class _HomePageState extends State<HomePage> {
 
   Widget buildSeriesPageContent() {
     final categories = seriesCategoryNames;
-    final effectiveCategory = categories.contains(selectedSeriesCategory)
-        ? selectedSeriesCategory
+    final effectiveCategory = categories.any((category) => sameCategory(category, selectedSeriesCategory))
+        ? categories.firstWhere((category) => sameCategory(category, selectedSeriesCategory))
         : 'Todos';
     final results = filteredSeries;
     final visibleItems = results.take(visibleSeries).toList();
@@ -2943,7 +3002,7 @@ class _HomePageState extends State<HomePage> {
       children: [
         buildPageHeader(
           'Séries',
-          'Dubladas primeiro. Use a busca para encontrar séries legendadas também.',
+          'Catálogo completo da sua lista. Sem capa aparece somente na busca.',
         ),
         buildCatalogCategoryChips(
           categories: categories,
@@ -2966,7 +3025,7 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 18),
         ],
         buildSectionTitle(
-          effectiveCategory == 'Todos' ? 'Séries Dubladas e Populares' : effectiveCategory,
+          effectiveCategory == 'Todos' ? 'Séries com capa da sua lista' : effectiveCategory,
           '${visibleItems.length}/${results.length} SÉRIES',
         ),
         buildPosterGrid(items: visibleItems),
@@ -2992,7 +3051,7 @@ class _HomePageState extends State<HomePage> {
           controller: globalSearchController,
           hintText: 'Buscar filme, série ou canal...',
           onChanged: (value) {
-            setState(() {
+            debounceSearch(() {
               globalSearchQuery = value;
             });
           },
@@ -3027,7 +3086,7 @@ class _HomePageState extends State<HomePage> {
             'Resultados',
             '${results.length} ITENS',
           ),
-          buildPosterGrid(items: results),
+          buildPosterGrid(items: results.take(80).toList()),
         ],
       ],
     );
@@ -3424,7 +3483,7 @@ class _HomePageState extends State<HomePage> {
                 shrinkWrap: true,
                 physics: const NeverScrollableScrollPhysics(),
                 clipBehavior: Clip.hardEdge,
-                itemCount: filteredLiveChannels.take(60).length,
+                itemCount: filteredLiveChannels.take(visibleLiveChannels).length,
                 gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                   maxCrossAxisExtent: 280,
                   mainAxisExtent: 145,
@@ -3435,6 +3494,18 @@ class _HomePageState extends State<HomePage> {
                   return buildLiveChannelCard(filteredLiveChannels[index]);
                 },
               ),
+        buildLoadMoreButton(
+          visible: visibleLiveChannels < filteredLiveChannels.length,
+          onPressed: () {
+            setState(() {
+              visibleLiveChannels += 60;
+
+              if (visibleLiveChannels > filteredLiveChannels.length) {
+                visibleLiveChannels = filteredLiveChannels.length;
+              }
+            });
+          },
+        ),
         const SizedBox(height: 18),
         if (recentChannels.isNotEmpty) ...[
           buildSectionTitle(
