@@ -119,7 +119,13 @@ class _HomePageState extends State<HomePage> {
   Set<String> loadingSynopses = {};
   List<String> tmdbTrendingMovies = [];
   List<String> tmdbTrendingSeries = [];
+  List<_ContentItem> tmdbBrazilMovies = [];
+  List<_ContentItem> tmdbBrazilSeries = [];
+  List<_ContentItem> tmdbSearchMovies = [];
+  List<_ContentItem> tmdbSearchSeries = [];
   bool tmdbTrendingLoaded = false;
+  bool onboardingMovieSearchLoading = false;
+  bool onboardingSeriesSearchLoading = false;
   List<String> preferredCategories = [];
   bool preferencesOnboardingCompleted = false;
   bool preferencesOnboardingLoaded = false;
@@ -129,9 +135,17 @@ class _HomePageState extends State<HomePage> {
   final TextEditingController liveSearchController = TextEditingController();
   final TextEditingController movieSearchController = TextEditingController();
   final TextEditingController seriesSearchController = TextEditingController();
+  final TextEditingController onboardingMovieSearchController =
+      TextEditingController();
+  final TextEditingController onboardingSeriesSearchController =
+      TextEditingController();
+  final TextEditingController globalSearchController = TextEditingController();
   String liveSearchQuery = '';
   String movieSearchQuery = '';
   String seriesSearchQuery = '';
+  String onboardingMovieSearchQuery = '';
+  String onboardingSeriesSearchQuery = '';
+  String globalSearchQuery = '';
   String selectedMovieCategory = 'Todos';
   String selectedSeriesCategory = 'Todos';
   List<LiveCategory> liveCategories = const [
@@ -144,6 +158,7 @@ class _HomePageState extends State<HomePage> {
     'Filmes',
     'Séries',
     'TV Ao Vivo',
+    'Buscar',
     'Favoritos',
     'Configurações',
     'Sair',
@@ -154,6 +169,7 @@ class _HomePageState extends State<HomePage> {
     Icons.movie_creation_rounded,
     Icons.tv_rounded,
     Icons.live_tv_rounded,
+    Icons.search_rounded,
     Icons.favorite_rounded,
     Icons.settings_rounded,
     Icons.logout_rounded,
@@ -310,6 +326,9 @@ class _HomePageState extends State<HomePage> {
     liveSearchController.dispose();
     movieSearchController.dispose();
     seriesSearchController.dispose();
+    onboardingMovieSearchController.dispose();
+    onboardingSeriesSearchController.dispose();
+    globalSearchController.dispose();
     videoControlsTimer?.cancel();
     videoController?.dispose();
     super.dispose();
@@ -394,6 +413,37 @@ class _HomePageState extends State<HomePage> {
       colors: const [Color(0xFF4B1A78), Color(0xFF12061C)],
       streamUrl: null,
       category: item.categoryName.isEmpty ? 'Séries' : item.categoryName,
+    );
+  }
+
+
+  _ContentItem contentItemFromTmdb(
+    Map<String, dynamic> item, {
+    required bool isSeries,
+  }) {
+    final id = item['id']?.toString() ?? item['title']?.toString() ?? '';
+    final title = item['title']?.toString() ?? '';
+    final year = item['year']?.toString() ?? '';
+    final overview = item['overview']?.toString() ?? '';
+    final poster = item['posterUrl']?.toString() ?? '';
+
+    return _ContentItem(
+      id: '${isSeries ? 'tmdb_series' : 'tmdb_movie'}_$id',
+      title: title,
+      subtitle: isSeries ? 'Série popular no Brasil' : 'Filme popular no Brasil',
+      tag: isSeries ? 'SÉRIE' : 'FILME',
+      year: year.isEmpty ? 'TMDB' : year,
+      duration: isSeries ? 'Séries populares' : 'Filmes populares',
+      description: overview.isEmpty
+          ? 'Título popular no Brasil selecionado pelo catálogo inteligente LumaPlay.'
+          : overview,
+      icon: isSeries ? Icons.tv_rounded : Icons.movie_creation_rounded,
+      poster: poster,
+      colors: isSeries
+          ? const [Color(0xFF4B1A78), Color(0xFF12061C)]
+          : const [Color(0xFF123A72), Color(0xFF07111F)],
+      streamUrl: null,
+      category: isSeries ? 'Séries populares' : 'Filmes populares',
     );
   }
 
@@ -556,6 +606,45 @@ class _HomePageState extends State<HomePage> {
     return poster.startsWith('http://') || poster.startsWith('https://');
   }
 
+  bool isDubbed(_ContentItem item) {
+    final text = [
+      item.title,
+      item.subtitle,
+      item.category,
+      item.tag,
+    ].join(' ').toUpperCase();
+
+    return text.contains('[D]') ||
+        text.contains('[DUB]') ||
+        text.contains('DUBLADO') ||
+        text.contains('PT-BR') ||
+        text.contains('DUAL AUDIO');
+  }
+
+  bool isSubtitled(_ContentItem item) {
+    final text = [
+      item.title,
+      item.subtitle,
+      item.category,
+      item.tag,
+    ].join(' ').toUpperCase();
+
+    return text.contains('[L]') ||
+        text.contains('[LEG]') ||
+        text.contains('LEGENDADO') ||
+        text.contains('LEGENDADA') ||
+        text.contains('SUB');
+  }
+
+  String cleanDisplayTitle(String title) {
+    return title
+        .replaceAll(RegExp(r'\[[dD]\]'), '')
+        .replaceAll(RegExp(r'\[[lL]\]'), '')
+        .replaceAll(RegExp(r'\[[^\]]*(DUB|LEG|SUB)[^\]]*\]', caseSensitive: false), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+  }
+
   List<_ContentItem> get moviesWithPoster {
     final withPoster = movies.where(hasValidPoster).toList();
 
@@ -578,7 +667,7 @@ class _HomePageState extends State<HomePage> {
 
   List<_ContentItem> get filteredMovies {
     final query = movieSearchQuery.trim().toLowerCase();
-    final source = query.isEmpty ? moviesWithPoster : movies;
+    final source = query.isEmpty ? mainMovies : movies;
 
     return source.where((item) {
       final matchesCategory =
@@ -586,6 +675,9 @@ class _HomePageState extends State<HomePage> {
 
       final matchesSearch = query.isEmpty ||
           item.title.toLowerCase().contains(query) ||
+          item.subtitle.toLowerCase().contains(query) ||
+          item.description.toLowerCase().contains(query) ||
+          item.tag.toLowerCase().contains(query) ||
           item.category.toLowerCase().contains(query) ||
           item.year.toLowerCase().contains(query);
 
@@ -595,7 +687,7 @@ class _HomePageState extends State<HomePage> {
 
   List<_ContentItem> get filteredSeries {
     final query = seriesSearchQuery.trim().toLowerCase();
-    final source = query.isEmpty ? seriesWithPoster : series;
+    final source = query.isEmpty ? mainSeries : series;
 
     return source.where((item) {
       final matchesCategory =
@@ -603,6 +695,9 @@ class _HomePageState extends State<HomePage> {
 
       final matchesSearch = query.isEmpty ||
           item.title.toLowerCase().contains(query) ||
+          item.subtitle.toLowerCase().contains(query) ||
+          item.description.toLowerCase().contains(query) ||
+          item.tag.toLowerCase().contains(query) ||
           item.category.toLowerCase().contains(query) ||
           item.year.toLowerCase().contains(query);
 
@@ -730,7 +825,7 @@ class _HomePageState extends State<HomePage> {
           ),
           SizedBox(width: 14),
           Text(
-            'Carregando filmes e séries da sua lista...',
+            'Carregando filmes e séries...',
             style: TextStyle(
               color: Colors.white,
               fontSize: 15,
@@ -933,6 +1028,10 @@ class _HomePageState extends State<HomePage> {
     final selectedItems = [
       ...movies.where((item) => onboardingMovieIds.contains(item.id)),
       ...series.where((item) => onboardingSeriesIds.contains(item.id)),
+      ...tmdbBrazilMovies.where((item) => onboardingMovieIds.contains(item.id)),
+      ...tmdbBrazilSeries.where((item) => onboardingSeriesIds.contains(item.id)),
+      ...tmdbSearchMovies.where((item) => onboardingMovieIds.contains(item.id)),
+      ...tmdbSearchSeries.where((item) => onboardingSeriesIds.contains(item.id)),
     ];
 
     final categories = selectedItems
@@ -1042,11 +1141,29 @@ class _HomePageState extends State<HomePage> {
               .toList()
           : <String>[];
 
+      final movieCards = movieItems is List
+          ? movieItems
+              .whereType<Map<String, dynamic>>()
+              .map((item) => contentItemFromTmdb(item, isSeries: false))
+              .where((item) => item.title.trim().isNotEmpty)
+              .toList()
+          : <_ContentItem>[];
+
+      final seriesCards = seriesItems is List
+          ? seriesItems
+              .whereType<Map<String, dynamic>>()
+              .map((item) => contentItemFromTmdb(item, isSeries: true))
+              .where((item) => item.title.trim().isNotEmpty)
+              .toList()
+          : <_ContentItem>[];
+
       if (!mounted) return;
 
       setState(() {
         tmdbTrendingMovies = movieTitles;
         tmdbTrendingSeries = seriesTitles;
+        tmdbBrazilMovies = movieCards;
+        tmdbBrazilSeries = seriesCards;
         tmdbTrendingLoaded = true;
       });
     } catch (_) {
@@ -1087,32 +1204,34 @@ class _HomePageState extends State<HomePage> {
 
   List<_ContentItem> get trendingBrazilMovies {
     final matched = matchCatalogWithTrending(
-      catalog: moviesWithPoster,
+      catalog: mainMovies,
       trendingTitles: tmdbTrendingMovies,
     );
 
     if (matched.isNotEmpty) return matched;
 
-    return popularBrazilMovies;
+    final fallback = popularBrazilMovies.where((item) => !isSubtitled(item)).toList();
+    return fallback.isEmpty ? popularBrazilMovies : fallback;
   }
 
   List<_ContentItem> get trendingBrazilSeries {
     final matched = matchCatalogWithTrending(
-      catalog: seriesWithPoster,
+      catalog: mainSeries,
       trendingTitles: tmdbTrendingSeries,
     );
 
     if (matched.isNotEmpty) return matched;
 
-    return popularBrazilSeries;
+    final fallback = popularBrazilSeries.where((item) => !isSubtitled(item)).toList();
+    return fallback.isEmpty ? popularBrazilSeries : fallback;
   }
 
   List<_ContentItem> get recommendedMovies {
     if (preferredCategories.isEmpty) {
-      return moviesWithPoster.take(20).toList();
+      return mainMovies.take(20).toList();
     }
 
-    final preferred = moviesWithPoster.where((item) {
+    final preferred = mainMovies.where((item) {
       return preferredCategories.contains(item.category);
     }).toList();
 
@@ -1125,10 +1244,10 @@ class _HomePageState extends State<HomePage> {
 
   List<_ContentItem> get recommendedSeries {
     if (preferredCategories.isEmpty) {
-      return seriesWithPoster.take(20).toList();
+      return mainSeries.take(20).toList();
     }
 
-    final preferred = seriesWithPoster.where((item) {
+    final preferred = mainSeries.where((item) {
       return preferredCategories.contains(item.category);
     }).toList();
 
@@ -1251,6 +1370,187 @@ class _HomePageState extends State<HomePage> {
     });
 
     return ranked.take(20).toList();
+  }
+
+  List<_ContentItem> get mainMovies {
+    final items = moviesWithPoster.where((item) => !isSubtitled(item)).toList();
+    return items.isEmpty ? moviesWithPoster : items;
+  }
+
+  List<_ContentItem> get mainSeries {
+    final items = seriesWithPoster.where((item) => !isSubtitled(item)).toList();
+    return items.isEmpty ? seriesWithPoster : items;
+  }
+
+  List<_ContentItem> get dubbedMovies {
+    final items = moviesWithPoster.where(isDubbed).toList();
+    if (items.isNotEmpty) return items;
+    return popularBrazilMovies.where((item) => !isSubtitled(item)).toList();
+  }
+
+  List<_ContentItem> get dubbedSeries {
+    final items = seriesWithPoster.where(isDubbed).toList();
+    if (items.isNotEmpty) return items;
+    return popularBrazilSeries.where((item) => !isSubtitled(item)).toList();
+  }
+
+  List<_ContentItem> get subtitledMovies {
+    return moviesWithPoster.where(isSubtitled).toList();
+  }
+
+  List<_ContentItem> get subtitledSeries {
+    return seriesWithPoster.where(isSubtitled).toList();
+  }
+
+  List<_ContentItem> get onboardingMovies {
+    final query = onboardingMovieSearchQuery.trim().toLowerCase();
+
+    if (query.isEmpty) {
+      final source = tmdbBrazilMovies.isNotEmpty
+          ? tmdbBrazilMovies
+          : trendingBrazilMovies.isNotEmpty
+              ? trendingBrazilMovies
+              : popularBrazilMovies;
+
+      return source.take(100).toList();
+    }
+
+    if (tmdbSearchMovies.isNotEmpty) {
+      return tmdbSearchMovies.take(100).toList();
+    }
+
+    return movies.where((item) {
+      return item.title.toLowerCase().contains(query) ||
+          item.category.toLowerCase().contains(query) ||
+          item.year.toLowerCase().contains(query);
+    }).take(100).toList();
+  }
+
+  List<_ContentItem> get onboardingSeries {
+    final query = onboardingSeriesSearchQuery.trim().toLowerCase();
+
+    if (query.isEmpty) {
+      final source = tmdbBrazilSeries.isNotEmpty
+          ? tmdbBrazilSeries
+          : trendingBrazilSeries.isNotEmpty
+              ? trendingBrazilSeries
+              : popularBrazilSeries;
+
+      return source.take(100).toList();
+    }
+
+    if (tmdbSearchSeries.isNotEmpty) {
+      return tmdbSearchSeries.take(100).toList();
+    }
+
+    return series.where((item) {
+      return item.title.toLowerCase().contains(query) ||
+          item.category.toLowerCase().contains(query) ||
+          item.year.toLowerCase().contains(query);
+    }).take(100).toList();
+  }
+
+  List<_ContentItem> get globalSearchResults {
+    final query = globalSearchQuery.trim().toLowerCase();
+
+    if (query.isEmpty) return const [];
+
+    final combined = <_ContentItem>[
+      ...movies,
+      ...series,
+      ...liveChannels,
+    ];
+
+    return combined.where((item) {
+      return item.title.toLowerCase().contains(query) ||
+          item.subtitle.toLowerCase().contains(query) ||
+          item.description.toLowerCase().contains(query) ||
+          item.tag.toLowerCase().contains(query) ||
+          item.category.toLowerCase().contains(query) ||
+          item.year.toLowerCase().contains(query);
+    }).take(120).toList();
+  }
+
+  Future<void> searchTmdbOnboarding({
+    required String query,
+    required bool isSeries,
+  }) async {
+    final cleanQuery = query.trim();
+
+    if (cleanQuery.length < 2) {
+      setState(() {
+        if (isSeries) {
+          onboardingSeriesSearchQuery = cleanQuery;
+          tmdbSearchSeries = [];
+          onboardingSeriesSearchLoading = false;
+        } else {
+          onboardingMovieSearchQuery = cleanQuery;
+          tmdbSearchMovies = [];
+          onboardingMovieSearchLoading = false;
+        }
+      });
+      return;
+    }
+
+    setState(() {
+      if (isSeries) {
+        onboardingSeriesSearchQuery = cleanQuery;
+        onboardingSeriesSearchLoading = true;
+      } else {
+        onboardingMovieSearchQuery = cleanQuery;
+        onboardingMovieSearchLoading = true;
+      }
+    });
+
+    try {
+      final response = await tmdbDio.get(
+        '/tmdb/search',
+        queryParameters: {
+          'query': cleanQuery,
+          'type': isSeries ? 'series' : 'movie',
+        },
+      );
+
+      final data = response.data;
+      final results = data is Map<String, dynamic> ? data['results'] : null;
+
+      final items = results is List
+          ? results
+              .whereType<Map<String, dynamic>>()
+              .map((item) => contentItemFromTmdb(item, isSeries: isSeries))
+              .where((item) => item.title.trim().isNotEmpty)
+              .toList()
+          : <_ContentItem>[];
+
+      if (!mounted) return;
+
+      if ((isSeries && cleanQuery != onboardingSeriesSearchQuery) ||
+          (!isSeries && cleanQuery != onboardingMovieSearchQuery)) {
+        return;
+      }
+
+      setState(() {
+        if (isSeries) {
+          tmdbSearchSeries = items;
+          onboardingSeriesSearchLoading = false;
+        } else {
+          tmdbSearchMovies = items;
+          onboardingMovieSearchLoading = false;
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        if (isSeries) {
+          tmdbSearchSeries = [];
+          onboardingSeriesSearchLoading = false;
+        } else {
+          tmdbSearchMovies = [];
+          onboardingMovieSearchLoading = false;
+        }
+      });
+    }
   }
 
   Future<void> loadFavorites() async {
@@ -2353,8 +2653,16 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget buildHomePageContent() {
-    final homeMovies = moviesWithPoster.take(20).toList();
-    final homeSeries = seriesWithPoster.take(20).toList();
+    final highBrazil = trendingBrazilMovies.take(20).toList();
+    final homeDubbedMovies = dubbedMovies.take(20).toList();
+    final homeDubbedSeries = dubbedSeries.take(20).toList();
+    final homeRecommended = recommendedMovies.take(20).toList();
+    final homeFavorites = favoriteItems.take(20).toList();
+    final homeContinue = continueWatchingItems.take(20).toList();
+    final homeLegendados = [
+      ...subtitledMovies.take(10),
+      ...subtitledSeries.take(10),
+    ];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2365,10 +2673,50 @@ class _HomePageState extends State<HomePage> {
           buildCatalogLoading(),
           const SizedBox(height: 18),
         ],
-        if (continueWatchingItems.isNotEmpty) ...[
+        if (highBrazil.isNotEmpty) ...[
           buildMovieRow(
-            title: 'Continue assistindo',
-            items: continueWatchingItems.take(20).toList(),
+            title: '🔥 Em alta no Brasil',
+            items: highBrazil,
+            action: '${highBrazil.length} TÍTULOS',
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (homeDubbedMovies.isNotEmpty) ...[
+          buildMovieRow(
+            title: '🎬 Filmes Dublados',
+            items: homeDubbedMovies,
+            action: '${homeDubbedMovies.length} FILMES',
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (homeDubbedSeries.isNotEmpty) ...[
+          buildMovieRow(
+            title: '📺 Séries Dubladas',
+            items: homeDubbedSeries,
+            action: '${homeDubbedSeries.length} SÉRIES',
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (preferredCategories.isNotEmpty && homeRecommended.isNotEmpty) ...[
+          buildMovieRow(
+            title: '⭐ Recomendados para você',
+            items: homeRecommended,
+            action: '${preferredCategories.length} GOSTOS',
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (homeFavorites.isNotEmpty) ...[
+          buildMovieRow(
+            title: '❤️ Favoritos',
+            items: homeFavorites,
+            action: '${favoriteItems.length} ITENS',
+          ),
+          const SizedBox(height: 14),
+        ],
+        if (homeContinue.isNotEmpty) ...[
+          buildMovieRow(
+            title: '🕒 Continue assistindo',
+            items: homeContinue,
             action: '${continueWatchingItems.length} ITENS',
           ),
           const SizedBox(height: 14),
@@ -2376,43 +2724,13 @@ class _HomePageState extends State<HomePage> {
           buildEmptyContinueWatching(),
           const SizedBox(height: 14),
         ],
-        buildMovieRow(
-          title: 'Em alta no Brasil',
-          items: trendingBrazilMovies,
-          action: '${popularBrazilMovies.length} FILMES',
-        ),
-        const SizedBox(height: 14),
-        buildMovieRow(
-          title: 'Séries em alta',
-          items: trendingBrazilSeries,
-          action: '${popularBrazilSeries.length} SÉRIES',
-        ),
-        const SizedBox(height: 14),
-        if (preferredCategories.isNotEmpty) ...[
+        if (homeLegendados.isNotEmpty) ...[
           buildMovieRow(
-            title: 'Recomendado para você',
-            items: recommendedMovies,
-            action: '${preferredCategories.length} GOSTOS',
+            title: '🌎 Legendados',
+            items: homeLegendados,
+            action: '${homeLegendados.length} TÍTULOS',
           ),
-          const SizedBox(height: 14),
-          buildMovieRow(
-            title: 'Séries recomendadas',
-            items: recommendedSeries,
-            action: '${recommendedSeries.length} SÉRIES',
-          ),
-          const SizedBox(height: 14),
         ],
-        buildMovieRow(
-          title: 'Filmes da sua lista',
-          items: homeMovies,
-          action: '${homeMovies.length}/${moviesWithPoster.length} FILMES',
-        ),
-        const SizedBox(height: 14),
-        buildMovieRow(
-          title: 'Séries da sua lista',
-          items: homeSeries,
-          action: '${homeSeries.length}/${seriesWithPoster.length} SÉRIES',
-        ),
       ],
     );
   }
@@ -2426,7 +2744,7 @@ class _HomePageState extends State<HomePage> {
       children: [
         buildPageHeader(
           'Filmes',
-          'Catálogo real importado da sua lista Xtream.',
+          'Dublados primeiro. Use a busca para encontrar filmes legendados também.',
         ),
         buildCatalogCategoryChips(
           categories: movieCategoryNames,
@@ -2449,7 +2767,7 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 18),
         ],
         buildSectionTitle(
-          selectedMovieCategory == 'Todos' ? 'Filmes da sua lista' : selectedMovieCategory,
+          selectedMovieCategory == 'Todos' ? 'Filmes Dublados e Populares' : selectedMovieCategory,
           '${visibleItems.length}/${results.length} FILMES',
         ),
         buildPosterGrid(items: visibleItems),
@@ -2470,7 +2788,7 @@ class _HomePageState extends State<HomePage> {
       children: [
         buildPageHeader(
           'Séries',
-          'Catálogo real importado da sua lista Xtream.',
+          'Dubladas primeiro. Use a busca para encontrar séries legendadas também.',
         ),
         buildCatalogCategoryChips(
           categories: seriesCategoryNames,
@@ -2493,7 +2811,7 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 18),
         ],
         buildSectionTitle(
-          selectedSeriesCategory == 'Todos' ? 'Séries da sua lista' : selectedSeriesCategory,
+          selectedSeriesCategory == 'Todos' ? 'Séries Dubladas e Populares' : selectedSeriesCategory,
           '${visibleItems.length}/${results.length} SÉRIES',
         ),
         buildPosterGrid(items: visibleItems),
@@ -2501,6 +2819,61 @@ class _HomePageState extends State<HomePage> {
           visible: visibleSeries < results.length,
           onPressed: showMoreSeries,
         ),
+      ],
+    );
+  }
+
+  Widget buildGlobalSearchPageContent() {
+    final results = globalSearchResults;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        buildPageHeader(
+          'Buscar',
+          'Encontre filmes, séries e canais ao vivo em uma única busca.',
+        ),
+        buildCatalogSearchBox(
+          controller: globalSearchController,
+          hintText: 'Buscar filme, série ou canal...',
+          onChanged: (value) {
+            setState(() {
+              globalSearchQuery = value;
+            });
+          },
+          onClear: () {
+            globalSearchController.clear();
+            setState(() {
+              globalSearchQuery = '';
+            });
+          },
+        ),
+        const SizedBox(height: 18),
+        if (globalSearchQuery.trim().isEmpty)
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(24),
+              border: Border.all(color: Colors.white.withOpacity(0.08)),
+            ),
+            child: const Text(
+              'Digite o nome de um filme, série ou canal para pesquisar.',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 15,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          )
+        else ...[
+          buildSectionTitle(
+            'Resultados',
+            '${results.length} ITENS',
+          ),
+          buildPosterGrid(items: results),
+        ],
       ],
     );
   }
@@ -3671,7 +4044,7 @@ class _HomePageState extends State<HomePage> {
       );
 
       setState(() {
-        selectedMenu = 5;
+        selectedMenu = 6;
       });
     } on DioException catch (error) {
       final data = error.response?.data;
@@ -4828,8 +5201,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget buildPreferencesOnboardingPage() {
-    final movieOptions = moviesWithPoster.take(30).toList();
-    final seriesOptions = seriesWithPoster.take(30).toList();
+    final movieOptions = onboardingMovies;
+    final seriesOptions = onboardingSeries;
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(22),
@@ -4863,6 +5236,24 @@ class _HomePageState extends State<HomePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                buildCatalogSearchBox(
+                  controller: onboardingMovieSearchController,
+                  hintText: '🔍 Buscar filme...',
+                  onChanged: (value) {
+                    searchTmdbOnboarding(
+                      query: value,
+                      isSeries: false,
+                    );
+                  },
+                  onClear: () {
+                    onboardingMovieSearchController.clear();
+                    searchTmdbOnboarding(
+                      query: '',
+                      isSeries: false,
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
                 Text(
                   'Filmes escolhidos: ${onboardingMovieIds.length}/5',
                   style: const TextStyle(
@@ -4871,6 +5262,10 @@ class _HomePageState extends State<HomePage> {
                     fontWeight: FontWeight.w900,
                   ),
                 ),
+                if (onboardingMovieSearchLoading) ...[
+                  const SizedBox(height: 12),
+                  const LinearProgressIndicator(color: Colors.white),
+                ],
                 const SizedBox(height: 14),
                 buildOnboardingGrid(
                   items: movieOptions,
@@ -4904,6 +5299,24 @@ class _HomePageState extends State<HomePage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                buildCatalogSearchBox(
+                  controller: onboardingSeriesSearchController,
+                  hintText: '🔍 Buscar série...',
+                  onChanged: (value) {
+                    searchTmdbOnboarding(
+                      query: value,
+                      isSeries: true,
+                    );
+                  },
+                  onClear: () {
+                    onboardingSeriesSearchController.clear();
+                    searchTmdbOnboarding(
+                      query: '',
+                      isSeries: true,
+                    );
+                  },
+                ),
+                const SizedBox(height: 16),
                 Text(
                   'Séries escolhidas: ${onboardingSeriesIds.length}/5',
                   style: const TextStyle(
@@ -4912,6 +5325,10 @@ class _HomePageState extends State<HomePage> {
                     fontWeight: FontWeight.w900,
                   ),
                 ),
+                if (onboardingSeriesSearchLoading) ...[
+                  const SizedBox(height: 12),
+                  const LinearProgressIndicator(color: Colors.white),
+                ],
                 const SizedBox(height: 14),
                 buildOnboardingGrid(
                   items: seriesOptions,
@@ -4991,8 +5408,9 @@ class _HomePageState extends State<HomePage> {
     if (selectedMenu == 1) return buildMoviesPageContent();
     if (selectedMenu == 2) return buildSeriesPageContent();
     if (selectedMenu == 3) return buildLiveContent();
-    if (selectedMenu == 4) return buildFavoritesPageContent();
-    if (selectedMenu == 5) return buildSettingsContent();
+    if (selectedMenu == 4) return buildGlobalSearchPageContent();
+    if (selectedMenu == 5) return buildFavoritesPageContent();
+    if (selectedMenu == 6) return buildSettingsContent();
     if (selectedMenu == 7) return buildAccountPage();
     if (selectedMenu == 8) return buildPasswordPage();
     if (selectedMenu == 9) return buildTermsPage();

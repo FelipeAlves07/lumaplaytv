@@ -23,14 +23,23 @@ class LiveRepository {
         url,
         options: Options(
           responseType: ResponseType.plain,
-          receiveTimeout: const Duration(seconds: 15),
-          sendTimeout: const Duration(seconds: 15),
+          followRedirects: true,
+          receiveTimeout: const Duration(seconds: 35),
+          sendTimeout: const Duration(seconds: 20),
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Linux; Android 10; LumaPlayTV) AppleWebKit/537.36',
+            'Accept': '*/*',
+          },
+          validateStatus: (status) {
+            return status != null && status >= 200 && status < 400;
+          },
         ),
       );
 
       final data = response.data?.toString() ?? '';
 
-      if (data.trim().isEmpty) {
+      if (data.trim().isEmpty || !data.contains('#EXTM3U')) {
         return M3uParser.parse(demoM3u);
       }
 

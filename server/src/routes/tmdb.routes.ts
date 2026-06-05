@@ -195,4 +195,87 @@ router.get('/trending-brazil', async (req, res) => {
   }
 });
 
+
+router.get('/search', async (req, res) => {
+  const apiKey = process.env.TMDB_API_KEY;
+
+  if (!apiKey) {
+    return res.status(200).json({
+      results: [],
+      source: 'missing_api_key',
+    });
+  }
+
+  const query = req.query.query?.toString().trim() ?? '';
+  const type = req.query.type?.toString() === 'series' ? 'tv' : 'movie';
+
+  if (!query) {
+    return res.status(200).json({
+      results: [],
+      source: 'empty_query',
+    });
+  }
+
+  const params = new URLSearchParams({
+    api_key: apiKey,
+    language: 'pt-BR',
+    region: 'BR',
+    query,
+    include_adult: 'false',
+    page: '1',
+  });
+
+  const url = `https://api.themoviedb.org/3/search/${type}?${params.toString()}`;
+
+  try {
+    const response = await fetch(url);
+
+    if (!response.ok) {
+      return res.status(200).json({
+        results: [],
+        source: 'tmdb_error',
+      });
+    }
+
+    const data = await response.json() as any;
+    const results = Array.isArray(data?.results) ? data.results : [];
+
+    const mapped = results.slice(0, 30).map((item: any) => {
+      const title = type === 'movie'
+        ? item.title?.toString() ?? ''
+        : item.name?.toString() ?? '';
+
+      const originalTitle = type === 'movie'
+        ? item.original_title?.toString() ?? ''
+        : item.original_name?.toString() ?? '';
+
+      const date = type === 'movie'
+        ? item.release_date?.toString() ?? ''
+        : item.first_air_date?.toString() ?? '';
+
+      return {
+        id: item.id,
+        title,
+        originalTitle,
+        year: date ? date.slice(0, 4) : '',
+        overview: item.overview?.toString() ?? '',
+        posterUrl: tmdbImage(item.poster_path),
+        backdropUrl: tmdbBackdrop(item.backdrop_path),
+        voteAverage: item.vote_average ?? 0,
+        popularity: item.popularity ?? 0,
+      };
+    }).filter((item: any) => item.title);
+
+    return res.json({
+      results: mapped,
+      source: 'tmdb',
+    });
+  } catch (error) {
+    return res.status(200).json({
+      results: [],
+      source: 'request_failed',
+    });
+  }
+});
+
 export default router;

@@ -298,7 +298,7 @@ class _LivePlayerPageState extends State<LivePlayerPage> {
                         ),
                         const SizedBox(height: 16),
                         const Text(
-                          'NÃ£o foi possÃ­vel abrir este canal',
+                          'Não foi possível abrir este canal',
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             color: Colors.white,
@@ -316,6 +316,16 @@ class _LivePlayerPageState extends State<LivePlayerPage> {
                             fontWeight: FontWeight.w700,
                           ),
                         ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'Canal ${currentIndex + 1} de ${widget.items.length} • ${currentItem.category}',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white.withOpacity(0.50),
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                         const SizedBox(height: 22),
                         Row(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -329,7 +339,7 @@ class _LivePlayerPageState extends State<LivePlayerPage> {
                             const SizedBox(width: 12),
                             _PlayerButton(
                               icon: Icons.skip_next_rounded,
-                              title: 'PrÃ³ximo',
+                              title: 'Próximo',
                               onPressed: nextChannel,
                             ),
                           ],
@@ -369,7 +379,32 @@ class _LivePlayerPageState extends State<LivePlayerPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const _LiveBadge(),
+                    Row(
+                      children: [
+                        const _LiveBadge(),
+                        const SizedBox(width: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 11,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.48),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: Colors.white24),
+                          ),
+                          child: Text(
+                            'Canal ${currentIndex + 1} de ${widget.items.length}',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.6,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 10),
                     Text(
                       currentItem.title,
@@ -418,7 +453,7 @@ class _LivePlayerPageState extends State<LivePlayerPage> {
                         const SizedBox(width: 12),
                         _PlayerButton(
                           icon: Icons.skip_next_rounded,
-                          title: 'PrÃ³ximo canal',
+                          title: 'Próximo canal',
                           onPressed: nextChannel,
                         ),
                         const Spacer(),
@@ -609,3 +644,4 @@ class _PlayerButtonState extends State<_PlayerButton> {
     );
   }
 }
+

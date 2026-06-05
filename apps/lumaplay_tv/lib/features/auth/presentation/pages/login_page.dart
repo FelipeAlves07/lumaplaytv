@@ -27,8 +27,8 @@ class _LoginPageState extends State<LoginPage> {
   final dio = Dio(
     BaseOptions(
       baseUrl: AppConfig.apiBaseUrl,
-      connectTimeout: const Duration(seconds: 12),
-      receiveTimeout: const Duration(seconds: 12),
+      connectTimeout: const Duration(seconds: 45),
+      receiveTimeout: const Duration(seconds: 45),
     ),
   );
 
@@ -109,6 +109,12 @@ class _LoginPageState extends State<LoginPage> {
         name: data['name']?.toString() ?? '',
         username: data['username']?.toString() ?? user,
         m3uUrl: m3uUrl,
+        expiresAt: data['expiresAt']?.toString() ?? '',
+        status: data['status']?.toString() ?? 'ACTIVE',
+        plan: data['plan']?.toString() ?? 'Premium',
+        iptvHost: firstPlaylist['host']?.toString() ?? '',
+        iptvUsername: firstPlaylist['username']?.toString() ?? '',
+        iptvPassword: firstPlaylist['password']?.toString() ?? '',
       );
 
       if (!mounted) return;
@@ -122,6 +128,10 @@ class _LoginPageState extends State<LoginPage> {
 
         if (statusCode == 401) {
           errorText = 'Usuário ou senha inválidos';
+        } else if (statusCode == 403) {
+          errorText = error.response?.data is Map<String, dynamic>
+              ? error.response?.data['message']?.toString()
+              : 'Acesso bloqueado ou expirado';
         } else {
           errorText = 'Não foi possível conectar ao servidor';
         }
