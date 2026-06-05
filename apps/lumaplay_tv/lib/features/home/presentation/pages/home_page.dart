@@ -107,6 +107,7 @@ class _HomePageState extends State<HomePage> {
   bool liveLoading = true;
   bool catalogLoading = true;
   bool sidebarVisible = false;
+  final ScrollController pageScrollController = ScrollController();
   int visibleMovies = 20;
   int visibleSeries = 20;
   List<_ContentItem> liveChannels = [];
@@ -329,6 +330,7 @@ class _HomePageState extends State<HomePage> {
     onboardingMovieSearchController.dispose();
     onboardingSeriesSearchController.dispose();
     globalSearchController.dispose();
+    pageScrollController.dispose();
     videoControlsTimer?.cancel();
     videoController?.dispose();
     super.dispose();
@@ -577,7 +579,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   List<String> get movieCategoryNames {
-    final names = movies
+    // Mostra apenas categorias com conteúdo visível na tela inicial.
+    // Itens sem capa e legendados ficam ocultos até o usuário pesquisar.
+    final names = mainMovies
         .map((item) => item.category.trim())
         .where((category) => category.isNotEmpty)
         .toSet()
@@ -589,7 +593,9 @@ class _HomePageState extends State<HomePage> {
   }
 
   List<String> get seriesCategoryNames {
-    final names = series
+    // Mostra apenas categorias com conteúdo visível na tela inicial.
+    // Animes/legendados ficam fora da curadoria principal e aparecem via busca.
+    final names = mainSeries
         .map((item) => item.category.trim())
         .where((category) => category.isNotEmpty)
         .toSet()
@@ -602,6 +608,15 @@ class _HomePageState extends State<HomePage> {
 
   bool hasValidPoster(_ContentItem item) {
     final poster = item.poster.trim();
+    final lower = poster.toLowerCase();
+
+    if (poster.isEmpty) return false;
+    if (lower.contains('poster_sem_capa')) return false;
+    if (lower.contains('sem_capa')) return false;
+    if (lower.contains('no_poster')) return false;
+    if (lower.contains('no-poster')) return false;
+    if (lower.contains('placeholder')) return false;
+    if (lower.contains('conteudo_sem_capa')) return false;
 
     return poster.startsWith('http://') || poster.startsWith('https://');
   }
@@ -633,7 +648,82 @@ class _HomePageState extends State<HomePage> {
         text.contains('[LEG]') ||
         text.contains('LEGENDADO') ||
         text.contains('LEGENDADA') ||
+        text.contains('LEGENDADAS') ||
+        text.contains('LEGENDADOS') ||
         text.contains('SUB');
+  }
+
+  bool isAnimeContent(_ContentItem item) {
+    final text = [
+      item.title,
+      item.subtitle,
+      item.category,
+      item.tag,
+    ].join(' ').toLowerCase();
+
+    return text.contains('anime') ||
+        text.contains('animes') ||
+        text.contains('crunchyroll') ||
+        text.contains('crunchy') ||
+        text.contains('otaku') ||
+        text.contains('tokusatsu');
+  }
+
+  bool isAdultContent(_ContentItem item) {
+    final text = [
+      item.title,
+      item.subtitle,
+      item.category,
+      item.tag,
+    ].join(' ').toLowerCase();
+
+    return text.contains('adult') ||
+        text.contains('xxx') ||
+        text.contains('+18') ||
+        text.contains('18+') ||
+        text.contains('hot') ||
+        text.contains('sexy') ||
+        text.contains('erótico') ||
+        text.contains('erotico') ||
+        text.contains('porn');
+  }
+
+  bool liveQueryAllowsAdult(String query) {
+    final value = query.trim().toLowerCase();
+
+    return value.contains('adult') ||
+        value.contains('xxx') ||
+        value.contains('+18') ||
+        value.contains('18+') ||
+        value.contains('hot');
+  }
+
+  List<_ContentItem> uniqueItems(List<_ContentItem> items, {int limit = 20}) {
+    final result = <_ContentItem>[];
+    final used = <String>{};
+
+    for (final item in items) {
+      if (used.contains(item.id)) continue;
+      if (result.any((existing) => cleanDisplayTitle(existing.title).toLowerCase() == cleanDisplayTitle(item.title).toLowerCase())) {
+        continue;
+      }
+      result.add(item);
+      used.add(item.id);
+      if (result.length >= limit) break;
+    }
+
+    return result;
+  }
+
+  List<_ContentItem> fillToLimit(
+    List<_ContentItem> primary,
+    List<_ContentItem> fallback, {
+    int limit = 20,
+  }) {
+    return uniqueItems([
+      ...primary,
+      ...fallback,
+    ], limit: limit);
   }
 
   String cleanDisplayTitle(String title) {
@@ -646,32 +736,24 @@ class _HomePageState extends State<HomePage> {
   }
 
   List<_ContentItem> get moviesWithPoster {
-    final withPoster = movies.where(hasValidPoster).toList();
-
-    if (withPoster.isEmpty) {
-      return movies.take(20).toList();
-    }
-
-    return withPoster;
+    return movies.where(hasValidPoster).toList();
   }
 
   List<_ContentItem> get seriesWithPoster {
-    final withPoster = series.where(hasValidPoster).toList();
-
-    if (withPoster.isEmpty) {
-      return series.take(20).toList();
-    }
-
-    return withPoster;
+    return series.where(hasValidPoster).toList();
   }
 
   List<_ContentItem> get filteredMovies {
     final query = movieSearchQuery.trim().toLowerCase();
     final source = query.isEmpty ? mainMovies : movies;
+    final availableCategories = movieCategoryNames;
+    final effectiveCategory = availableCategories.contains(selectedMovieCategory)
+        ? selectedMovieCategory
+        : 'Todos';
 
     return source.where((item) {
       final matchesCategory =
-          selectedMovieCategory == 'Todos' || item.category == selectedMovieCategory;
+          effectiveCategory == 'Todos' || item.category == effectiveCategory;
 
       final matchesSearch = query.isEmpty ||
           item.title.toLowerCase().contains(query) ||
@@ -680,6 +762,12 @@ class _HomePageState extends State<HomePage> {
           item.tag.toLowerCase().contains(query) ||
           item.category.toLowerCase().contains(query) ||
           item.year.toLowerCase().contains(query);
+
+      // Sem pesquisa: não exibir sem capa nem legendados nas páginas principais.
+      // Com pesquisa: liberar todo o catálogo para o usuário encontrar pelo nome.
+      if (query.isEmpty && (!hasValidPoster(item) || isSubtitled(item))) {
+        return false;
+      }
 
       return matchesCategory && matchesSearch;
     }).toList();
@@ -688,10 +776,14 @@ class _HomePageState extends State<HomePage> {
   List<_ContentItem> get filteredSeries {
     final query = seriesSearchQuery.trim().toLowerCase();
     final source = query.isEmpty ? mainSeries : series;
+    final availableCategories = seriesCategoryNames;
+    final effectiveCategory = availableCategories.contains(selectedSeriesCategory)
+        ? selectedSeriesCategory
+        : 'Todos';
 
     return source.where((item) {
       final matchesCategory =
-          selectedSeriesCategory == 'Todos' || item.category == selectedSeriesCategory;
+          effectiveCategory == 'Todos' || item.category == effectiveCategory;
 
       final matchesSearch = query.isEmpty ||
           item.title.toLowerCase().contains(query) ||
@@ -700,6 +792,12 @@ class _HomePageState extends State<HomePage> {
           item.tag.toLowerCase().contains(query) ||
           item.category.toLowerCase().contains(query) ||
           item.year.toLowerCase().contains(query);
+
+      // Sem pesquisa: não exibir sem capa, legendados nem animes na curadoria principal.
+      // Com pesquisa: liberar o catálogo completo para quem procurar manualmente.
+      if (query.isEmpty && (!hasValidPoster(item) || isSubtitled(item) || isAnimeContent(item))) {
+        return false;
+      }
 
       return matchesCategory && matchesSearch;
     }).toList();
@@ -864,9 +962,10 @@ class _HomePageState extends State<HomePage> {
       );
     }).toList();
 
+    final safeItems = items.where((item) => !isAdultContent(item)).toList();
     final counter = <String, int>{};
 
-    for (final item in items) {
+    for (final item in safeItems) {
       counter[item.category] = (counter[item.category] ?? 0) + 1;
     }
 
@@ -885,15 +984,15 @@ class _HomePageState extends State<HomePage> {
 
     setState(() {
       liveChannels = items;
-      filteredLiveChannels = items;
+      filteredLiveChannels = safeItems;
       liveCategories = [
-        LiveCategory(name: 'Todos', total: items.length),
+        LiveCategory(name: 'Todos', total: safeItems.length),
         ...categories,
       ];
       liveLoading = false;
 
-      if (selectedMenu == 3 && items.isNotEmpty) {
-        selectedHero = items.first;
+      if (selectedMenu == 3 && safeItems.isNotEmpty) {
+        selectedHero = safeItems.first;
       }
     });
   }
@@ -1208,10 +1307,17 @@ class _HomePageState extends State<HomePage> {
       trendingTitles: tmdbTrendingMovies,
     );
 
-    if (matched.isNotEmpty) return matched;
-
+    final tmdb = tmdbBrazilMovies.where(hasValidPoster).toList();
     final fallback = popularBrazilMovies.where((item) => !isSubtitled(item)).toList();
-    return fallback.isEmpty ? popularBrazilMovies : fallback;
+
+    return fillToLimit(
+      matched,
+      [
+        ...tmdb,
+        ...fallback,
+      ],
+      limit: 20,
+    );
   }
 
   List<_ContentItem> get trendingBrazilSeries {
@@ -1220,10 +1326,21 @@ class _HomePageState extends State<HomePage> {
       trendingTitles: tmdbTrendingSeries,
     );
 
-    if (matched.isNotEmpty) return matched;
+    final tmdb = tmdbBrazilSeries
+        .where((item) => hasValidPoster(item) && !isAnimeContent(item))
+        .toList();
+    final fallback = popularBrazilSeries
+        .where((item) => !isSubtitled(item) && !isAnimeContent(item))
+        .toList();
 
-    final fallback = popularBrazilSeries.where((item) => !isSubtitled(item)).toList();
-    return fallback.isEmpty ? popularBrazilSeries : fallback;
+    return fillToLimit(
+      matched,
+      [
+        ...tmdb,
+        ...fallback,
+      ],
+      limit: 20,
+    );
   }
 
   List<_ContentItem> get recommendedMovies {
@@ -1345,7 +1462,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   List<_ContentItem> get popularBrazilMovies {
-    final ranked = [...moviesWithPoster];
+    final ranked = [...moviesWithPoster.where((item) => !isSubtitled(item))];
 
     ranked.sort((a, b) {
       final score = popularBrazilScore(b).compareTo(popularBrazilScore(a));
@@ -1355,11 +1472,13 @@ class _HomePageState extends State<HomePage> {
       return a.title.compareTo(b.title);
     });
 
-    return ranked.take(20).toList();
+    return uniqueItems(ranked, limit: 20);
   }
 
   List<_ContentItem> get popularBrazilSeries {
-    final ranked = [...seriesWithPoster];
+    final ranked = [
+      ...seriesWithPoster.where((item) => !isSubtitled(item) && !isAnimeContent(item)),
+    ];
 
     ranked.sort((a, b) {
       final score = popularBrazilScore(b).compareTo(popularBrazilScore(a));
@@ -1369,29 +1488,31 @@ class _HomePageState extends State<HomePage> {
       return a.title.compareTo(b.title);
     });
 
-    return ranked.take(20).toList();
+    return uniqueItems(ranked, limit: 20);
   }
 
   List<_ContentItem> get mainMovies {
     final items = moviesWithPoster.where((item) => !isSubtitled(item)).toList();
-    return items.isEmpty ? moviesWithPoster : items;
+    return items;
   }
 
   List<_ContentItem> get mainSeries {
-    final items = seriesWithPoster.where((item) => !isSubtitled(item)).toList();
-    return items.isEmpty ? seriesWithPoster : items;
+    final items = seriesWithPoster
+        .where((item) => !isSubtitled(item) && !isAnimeContent(item))
+        .toList();
+    return items;
   }
 
   List<_ContentItem> get dubbedMovies {
-    final items = moviesWithPoster.where(isDubbed).toList();
-    if (items.isNotEmpty) return items;
-    return popularBrazilMovies.where((item) => !isSubtitled(item)).toList();
+    final dubbed = moviesWithPoster.where((item) => isDubbed(item) && !isSubtitled(item)).toList();
+    return fillToLimit(dubbed, popularBrazilMovies, limit: 20);
   }
 
   List<_ContentItem> get dubbedSeries {
-    final items = seriesWithPoster.where(isDubbed).toList();
-    if (items.isNotEmpty) return items;
-    return popularBrazilSeries.where((item) => !isSubtitled(item)).toList();
+    final dubbed = seriesWithPoster
+        .where((item) => isDubbed(item) && !isSubtitled(item) && !isAnimeContent(item))
+        .toList();
+    return fillToLimit(dubbed, trendingBrazilSeries, limit: 20);
   }
 
   List<_ContentItem> get subtitledMovies {
@@ -1399,7 +1520,20 @@ class _HomePageState extends State<HomePage> {
   }
 
   List<_ContentItem> get subtitledSeries {
-    return seriesWithPoster.where(isSubtitled).toList();
+    return seriesWithPoster.where((item) => isSubtitled(item) && !isAnimeContent(item)).toList();
+  }
+
+  List<_ContentItem> get homeTrendingBrazil {
+    final matched = trendingBrazilMovies.where(hasValidPoster).toList();
+    final tmdb = tmdbBrazilMovies.where(hasValidPoster).toList();
+    return fillToLimit(
+      tmdb,
+      [
+        ...matched,
+        ...popularBrazilMovies,
+      ],
+      limit: 20,
+    );
   }
 
   List<_ContentItem> get onboardingMovies {
@@ -1407,12 +1541,12 @@ class _HomePageState extends State<HomePage> {
 
     if (query.isEmpty) {
       final source = tmdbBrazilMovies.isNotEmpty
-          ? tmdbBrazilMovies
-          : trendingBrazilMovies.isNotEmpty
-              ? trendingBrazilMovies
+          ? tmdbBrazilMovies.where(hasValidPoster).toList()
+          : homeTrendingBrazil.isNotEmpty
+              ? homeTrendingBrazil
               : popularBrazilMovies;
 
-      return source.take(100).toList();
+      return uniqueItems(source, limit: 100);
     }
 
     if (tmdbSearchMovies.isNotEmpty) {
@@ -1431,12 +1565,10 @@ class _HomePageState extends State<HomePage> {
 
     if (query.isEmpty) {
       final source = tmdbBrazilSeries.isNotEmpty
-          ? tmdbBrazilSeries
-          : trendingBrazilSeries.isNotEmpty
-              ? trendingBrazilSeries
-              : popularBrazilSeries;
+          ? tmdbBrazilSeries.where(hasValidPoster).toList()
+          : popularBrazilSeries;
 
-      return source.take(100).toList();
+      return uniqueItems(source, limit: 100);
     }
 
     if (tmdbSearchSeries.isNotEmpty) {
@@ -1455,10 +1587,11 @@ class _HomePageState extends State<HomePage> {
 
     if (query.isEmpty) return const [];
 
+    final includeAdult = liveQueryAllowsAdult(query);
     final combined = <_ContentItem>[
       ...movies,
       ...series,
-      ...liveChannels,
+      ...liveChannels.where((item) => includeAdult || !isAdultContent(item)),
     ];
 
     return combined.where((item) {
@@ -1620,8 +1753,11 @@ class _HomePageState extends State<HomePage> {
     final nextCategory = category ?? selectedLiveCategory;
     final nextQuery = query ?? liveSearchQuery;
     final normalizedQuery = nextQuery.trim().toLowerCase();
+    final includeAdult = liveQueryAllowsAdult(nextQuery);
 
     final result = liveChannels.where((item) {
+      if (!includeAdult && isAdultContent(item)) return false;
+
       final matchesCategory = nextCategory == 'Todos' || item.category == nextCategory;
 
       final matchesSearch = normalizedQuery.isEmpty ||
@@ -1736,15 +1872,23 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    if (pageScrollController.hasClients) {
+      pageScrollController.jumpTo(0);
+    }
+
     setState(() {
       selectedMenu = index;
       detailItem = null;
       playerItem = null;
 
-      if (index == 0 || index == 1) selectedHero = movies.first;
-      if (index == 2) selectedHero = series.first;
-      if (index == 3 && liveChannels.isNotEmpty) {
-        selectedHero = liveChannels.first;
+      if (index == 0 && homeTrendingBrazil.isNotEmpty) {
+        selectedHero = homeTrendingBrazil.first;
+      } else if (index == 1 && mainMovies.isNotEmpty) {
+        selectedHero = mainMovies.first;
+      } else if (index == 2 && mainSeries.isNotEmpty) {
+        selectedHero = mainSeries.first;
+      } else if (index == 3 && filteredLiveChannels.isNotEmpty) {
+        selectedHero = filteredLiveChannels.first;
       }
 
       final compact = MediaQuery.of(context).size.width < 720;
@@ -2653,12 +2797,15 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget buildHomePageContent() {
-    final highBrazil = trendingBrazilMovies.take(20).toList();
+    final highBrazil = homeTrendingBrazil.take(20).toList();
     final homeDubbedMovies = dubbedMovies.take(20).toList();
     final homeDubbedSeries = dubbedSeries.take(20).toList();
-    final homeRecommended = recommendedMovies.take(20).toList();
-    final homeFavorites = favoriteItems.take(20).toList();
-    final homeContinue = continueWatchingItems.take(20).toList();
+    final homeRecommended = recommendedMovies
+        .where((item) => hasValidPoster(item) && !isAnimeContent(item))
+        .take(20)
+        .toList();
+    final homeFavorites = favoriteItems.where(hasValidPoster).take(20).toList();
+    final homeContinue = continueWatchingItems.where(hasValidPoster).take(20).toList();
     final homeLegendados = [
       ...subtitledMovies.take(10),
       ...subtitledSeries.take(10),
@@ -2736,6 +2883,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget buildMoviesPageContent() {
+    final categories = movieCategoryNames;
+    final effectiveCategory = categories.contains(selectedMovieCategory)
+        ? selectedMovieCategory
+        : 'Todos';
     final results = filteredMovies;
     final visibleItems = results.take(visibleMovies).toList();
 
@@ -2747,8 +2898,8 @@ class _HomePageState extends State<HomePage> {
           'Dublados primeiro. Use a busca para encontrar filmes legendados também.',
         ),
         buildCatalogCategoryChips(
-          categories: movieCategoryNames,
-          selectedCategory: selectedMovieCategory,
+          categories: categories,
+          selectedCategory: effectiveCategory,
           onSelected: selectMovieCategory,
         ),
         const SizedBox(height: 12),
@@ -2767,7 +2918,7 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 18),
         ],
         buildSectionTitle(
-          selectedMovieCategory == 'Todos' ? 'Filmes Dublados e Populares' : selectedMovieCategory,
+          effectiveCategory == 'Todos' ? 'Filmes Dublados e Populares' : effectiveCategory,
           '${visibleItems.length}/${results.length} FILMES',
         ),
         buildPosterGrid(items: visibleItems),
@@ -2780,6 +2931,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget buildSeriesPageContent() {
+    final categories = seriesCategoryNames;
+    final effectiveCategory = categories.contains(selectedSeriesCategory)
+        ? selectedSeriesCategory
+        : 'Todos';
     final results = filteredSeries;
     final visibleItems = results.take(visibleSeries).toList();
 
@@ -2791,8 +2946,8 @@ class _HomePageState extends State<HomePage> {
           'Dubladas primeiro. Use a busca para encontrar séries legendadas também.',
         ),
         buildCatalogCategoryChips(
-          categories: seriesCategoryNames,
-          selectedCategory: selectedSeriesCategory,
+          categories: categories,
+          selectedCategory: effectiveCategory,
           onSelected: selectSeriesCategory,
         ),
         const SizedBox(height: 12),
@@ -2811,7 +2966,7 @@ class _HomePageState extends State<HomePage> {
           const SizedBox(height: 18),
         ],
         buildSectionTitle(
-          selectedSeriesCategory == 'Todos' ? 'Séries Dubladas e Populares' : selectedSeriesCategory,
+          effectiveCategory == 'Todos' ? 'Séries Dubladas e Populares' : effectiveCategory,
           '${visibleItems.length}/${results.length} SÉRIES',
         ),
         buildPosterGrid(items: visibleItems),
@@ -3208,7 +3363,7 @@ class _HomePageState extends State<HomePage> {
               borderRadius: BorderRadius.circular(24),
             ),
             child: const Text(
-              'Verifique o arquivo demo_m3u.dart ou a origem da sua lista M3U.',
+              'Não foi possível carregar a lista M3U agora. Verifique a conexão e tente entrar novamente.',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 16,
@@ -3319,7 +3474,7 @@ class _HomePageState extends State<HomePage> {
         ],
         buildMovieRow(
           title: 'Programação recomendada',
-          items: movies.take(20).toList(),
+          items: popularBrazilMovies.take(20).toList(),
           action: 'AGORA',
         ),
       ],
@@ -5513,6 +5668,7 @@ class _HomePageState extends State<HomePage> {
                     ],
                     Expanded(
                       child: SingleChildScrollView(
+                        controller: pageScrollController,
                         clipBehavior: Clip.hardEdge,
                         child: buildContent(),
                       ),
