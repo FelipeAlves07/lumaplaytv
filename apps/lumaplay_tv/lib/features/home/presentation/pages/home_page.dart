@@ -101,6 +101,8 @@ class _HomePageState extends State<HomePage> {
   VideoPlayerController? videoController;
   Timer? videoControlsTimer;
   Timer? searchDebounceTimer;
+  Timer? onboardingMovieSearchDebounceTimer;
+  Timer? onboardingSeriesSearchDebounceTimer;
   bool videoLoading = false;
   bool videoError = false;
   bool videoControlsVisible = true;
@@ -129,6 +131,7 @@ class _HomePageState extends State<HomePage> {
   bool tmdbTrendingLoaded = false;
   bool onboardingMovieSearchLoading = false;
   bool onboardingSeriesSearchLoading = false;
+  bool finishingPreferenceOnboarding = false;
   List<String> preferredCategories = [];
   bool preferencesOnboardingCompleted = false;
   bool preferencesOnboardingLoaded = false;
@@ -335,6 +338,8 @@ class _HomePageState extends State<HomePage> {
     pageScrollController.dispose();
     videoControlsTimer?.cancel();
     searchDebounceTimer?.cancel();
+    onboardingMovieSearchDebounceTimer?.cancel();
+    onboardingSeriesSearchDebounceTimer?.cancel();
     videoController?.dispose();
     super.dispose();
   }
@@ -1169,6 +1174,8 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> finishPreferenceOnboarding() async {
+    if (finishingPreferenceOnboarding) return;
+
     if (onboardingMovieIds.length < 5 || onboardingSeriesIds.length < 5) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -1178,30 +1185,72 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
-    final selectedItems = [
-      ...movies.where((item) => onboardingMovieIds.contains(item.id)),
-      ...series.where((item) => onboardingSeriesIds.contains(item.id)),
-      ...tmdbBrazilMovies.where((item) => onboardingMovieIds.contains(item.id)),
-      ...tmdbBrazilSeries.where((item) => onboardingSeriesIds.contains(item.id)),
-      ...tmdbSearchMovies.where((item) => onboardingMovieIds.contains(item.id)),
-      ...tmdbSearchSeries.where((item) => onboardingSeriesIds.contains(item.id)),
-    ];
-
-    final categories = selectedItems
-        .map((item) => item.category.trim())
-        .where((category) => category.isNotEmpty && category != 'Todos')
-        .toSet()
-        .toList();
-
-    await preferencesStorage.finishOnboarding(categories);
-    await loadPreferredCategories();
-
-    if (!mounted) return;
-
     setState(() {
-      preferencesOnboardingCompleted = true;
-      preferencesOnboardingLoaded = true;
+      finishingPreferenceOnboarding = true;
+      onboardingMovieSearchLoading = false;
+      onboardingSeriesSearchLoading = false;
     });
+
+    try {
+      final selectedItems = <_ContentItem>[
+        ...movies.where((item) => onboardingMovieIds.contains(item.id)),
+        ...series.where((item) => onboardingSeriesIds.contains(item.id)),
+        ...tmdbBrazilMovies.where((item) => onboardingMovieIds.contains(item.id)),
+        ...tmdbBrazilSeries.where((item) => onboardingSeriesIds.contains(item.id)),
+        ...tmdbSearchMovies.where((item) => onboardingMovieIds.contains(item.id)),
+        ...tmdbSearchSeries.where((item) => onboardingSeriesIds.contains(item.id)),
+      ];
+
+      final categories = selectedItems
+          .map((item) => item.category.trim())
+          .where((category) =>
+              category.isNotEmpty &&
+              category != 'Todos' &&
+              !category.toLowerCase().contains('legendad') &&
+              !category.toLowerCase().contains('adult'))
+          .toSet()
+          .take(12)
+          .toList();
+
+      await preferencesStorage.finishOnboarding(categories);
+
+      if (!mounted) return;
+
+      onboardingMovieSearchController.clear();
+      onboardingSeriesSearchController.clear();
+      onboardingMovieSearchDebounceTimer?.cancel();
+      onboardingSeriesSearchDebounceTimer?.cancel();
+
+      setState(() {
+        preferredCategories = categories;
+        preferencesOnboardingCompleted = true;
+        preferencesOnboardingLoaded = true;
+        finishingPreferenceOnboarding = false;
+        onboardingMovieSearchQuery = '';
+        onboardingSeriesSearchQuery = '';
+        tmdbSearchMovies = [];
+        tmdbSearchSeries = [];
+      });
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (pageScrollController.hasClients) {
+          pageScrollController.jumpTo(0);
+        }
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        finishingPreferenceOnboarding = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível salvar suas preferências. Tente novamente.'),
+        ),
+      );
+    }
   }
 
   Future<void> resetPreferenceOnboarding() async {
@@ -1600,18 +1649,18 @@ class _HomePageState extends State<HomePage> {
               ? homeTrendingBrazil
               : popularBrazilMovies;
 
-      return uniqueItems(source, limit: 100);
+      return uniqueItems(source, limit: 60);
     }
 
     if (tmdbSearchMovies.isNotEmpty) {
-      return tmdbSearchMovies.take(100).toList();
+      return tmdbSearchMovies.take(60).toList();
     }
 
     return movies.where((item) {
       return item.title.toLowerCase().contains(query) ||
           item.category.toLowerCase().contains(query) ||
           item.year.toLowerCase().contains(query);
-    }).take(100).toList();
+    }).take(60).toList();
   }
 
   List<_ContentItem> get onboardingSeries {
@@ -1622,18 +1671,18 @@ class _HomePageState extends State<HomePage> {
           ? tmdbBrazilSeries.where(hasValidPoster).toList()
           : popularBrazilSeries;
 
-      return uniqueItems(source, limit: 100);
+      return uniqueItems(source, limit: 60);
     }
 
     if (tmdbSearchSeries.isNotEmpty) {
-      return tmdbSearchSeries.take(100).toList();
+      return tmdbSearchSeries.take(60).toList();
     }
 
     return series.where((item) {
       return item.title.toLowerCase().contains(query) ||
           item.category.toLowerCase().contains(query) ||
           item.year.toLowerCase().contains(query);
-    }).take(100).toList();
+    }).take(60).toList();
   }
 
   List<_ContentItem> get globalSearchResults {
@@ -1656,6 +1705,52 @@ class _HomePageState extends State<HomePage> {
           item.category.toLowerCase().contains(query) ||
           item.year.toLowerCase().contains(query);
     }).take(120).toList();
+  }
+
+  void onOnboardingMovieSearchChanged(String value) {
+    final query = value.trim();
+
+    onboardingMovieSearchDebounceTimer?.cancel();
+
+    if (query.length < 2) {
+      searchTmdbOnboarding(query: query, isSeries: false);
+      return;
+    }
+
+    setState(() {
+      onboardingMovieSearchQuery = query;
+    });
+
+    onboardingMovieSearchDebounceTimer = Timer(
+      const Duration(milliseconds: 420),
+      () {
+        if (!mounted) return;
+        searchTmdbOnboarding(query: query, isSeries: false);
+      },
+    );
+  }
+
+  void onOnboardingSeriesSearchChanged(String value) {
+    final query = value.trim();
+
+    onboardingSeriesSearchDebounceTimer?.cancel();
+
+    if (query.length < 2) {
+      searchTmdbOnboarding(query: query, isSeries: true);
+      return;
+    }
+
+    setState(() {
+      onboardingSeriesSearchQuery = query;
+    });
+
+    onboardingSeriesSearchDebounceTimer = Timer(
+      const Duration(milliseconds: 420),
+      () {
+        if (!mounted) return;
+        searchTmdbOnboarding(query: query, isSeries: true);
+      },
+    );
   }
 
   Future<void> searchTmdbOnboarding({
@@ -5465,12 +5560,7 @@ class _HomePageState extends State<HomePage> {
                 buildCatalogSearchBox(
                   controller: onboardingMovieSearchController,
                   hintText: '🔍 Buscar filme...',
-                  onChanged: (value) {
-                    searchTmdbOnboarding(
-                      query: value,
-                      isSeries: false,
-                    );
-                  },
+                  onChanged: onOnboardingMovieSearchChanged,
                   onClear: () {
                     onboardingMovieSearchController.clear();
                     searchTmdbOnboarding(
@@ -5528,12 +5618,7 @@ class _HomePageState extends State<HomePage> {
                 buildCatalogSearchBox(
                   controller: onboardingSeriesSearchController,
                   hintText: '🔍 Buscar série...',
-                  onChanged: (value) {
-                    searchTmdbOnboarding(
-                      query: value,
-                      isSeries: true,
-                    );
-                  },
+                  onChanged: onOnboardingSeriesSearchChanged,
                   onClear: () {
                     onboardingSeriesSearchController.clear();
                     searchTmdbOnboarding(
@@ -5566,10 +5651,11 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 22),
           _TvFocus(
-            onPressed: finishPreferenceOnboarding,
+            onPressed: finishingPreferenceOnboarding ? () {} : finishPreferenceOnboarding,
             childBuilder: (focused) {
               final enabled =
-                  onboardingMovieIds.length >= 5 && onboardingSeriesIds.length >= 5;
+                  onboardingMovieIds.length >= 5 && onboardingSeriesIds.length >= 5 &&
+                      !finishingPreferenceOnboarding;
 
               return AnimatedContainer(
                 duration: const Duration(milliseconds: 150),
@@ -5600,9 +5686,11 @@ class _HomePageState extends State<HomePage> {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      enabled
-                          ? 'Salvar e entrar'
-                          : 'Escolha 5 filmes e 5 séries',
+                      finishingPreferenceOnboarding
+                          ? 'Salvando preferências...'
+                          : enabled
+                              ? 'Salvar e entrar'
+                              : 'Escolha 5 filmes e 5 séries',
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 14,
